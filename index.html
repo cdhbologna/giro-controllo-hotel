@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Giro di Controllo</title>
+
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    display: flex;
+    margin: 0;
+  }
+
+  .sidebar {
+    width: 250px;
+    height: 100vh;
+    background-color: #2c3e50;
+    color: white;
+    padding-top: 20px;
+    position: fixed;
+    overflow-y: auto;
+  }
+
+  .sidebar a {
+    padding: 12px;
+    display: block;
+    color: white;
+    text-decoration: none;
+    cursor: pointer;
+  }
+
+  .sidebar a:hover {
+    background-color: #34495e;
+  }
+
+  .content {
+    margin-left: 270px;
+    padding: 20px;
+    width: 100%;
+  }
+
+  .section {
+    display: none;
+  }
+
+  .section.active {
+    display: block;
+  }
+
+  label {
+    display: block;
+    margin-top: 12px;
+    font-weight: 600;
+  }
+
+  textarea {
+    width: 100%;
+    height: 45px;
+    margin-top: 5px;
+  }
+
+  .timestamp {
+    font-size: 12px;
+    color: gray;
+    margin: 6px 0 10px 0;
+  }
+
+  button {
+    padding: 10px 14px;
+    margin: 10px 10px 0 0;
+    font-size: 15px;
+    cursor: pointer;
+  }
+
+  .header-box {
+    background: #f2f2f2;
+    padding: 15px;
+    margin-bottom: 20px;
+    border-radius: 6px;
+  }
+
+  .actions {
+    margin-top: 12px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .hint {
+    font-size: 13px;
+    color: #555;
+    margin-top: 10px;
+  }
+</style>
+</head>
+<body>
+
+<div class="sidebar">
+  <a onclick="showSection('header')">Intestazione</a>
+  <a onclick="showSection('piano_m1')">Piano -1</a>
+  <a onclick="showSection('piano_terra')">Piano Terra</a>
+  <a onclick="showSection('piano1')">Piano 1</a>
+  <a onclick="showSection('piano2')">Piano 2</a>
+  <a onclick="showSection('piano3')">Piano 3</a>
+  <a onclick="showSection('piano4')">Piano 4</a>
+  <a onclick="showSection('piano5')">Piano 5</a>
+  <a onclick="showSection('tetto')">Piano 6 Tetto</a>
+  <a onclick="showSection('scale')">Scale Emergenza Esterne</a>
+  <a onclick="showSection('area')">Area Esterna</a>
+  <a onclick="showSection('hotel')">Hotel</a>
+</div>
+
+<div class="content">
+
+  <div id="header" class="section active">
+    <h2>Giro di Controllo Mattutino</h2>
+
+    <div class="header-box">
+      <label>Data e Ora:
+        <input type="datetime-local" id="data_ora">
+      </label>
+
+      <label>Nome:
+        <input type="text" id="nome" placeholder="Inserisci nome">
+      </label>
+
+      <div class="actions">
+        <button type="button" onclick="generaReportTXT(false)">Report TXT (Tutto)</button>
+        <button type="button" onclick="generaReportTXT(true)">Report TXT (Solo anomalie)</button>
+        <button type="button" onclick="generaCSV(false)">Excel CSV (Tutto)</button>
+        <button type="button" onclick="generaCSV(true)">Excel CSV (Solo anomalie)</button>
+      </div>
+
+      <div class="hint">
+        “Solo anomalie” = include solo le voci NON FATTE (e include comunque eventuali note).
+      </div>
+    </div>
+  </div>
+
+<script>
+  function showSection(id){
+    document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
+    const el = document.getElementById(id);
+    if(!el){
+      console.warn("Sezione non trovata:", id);
+      return;
+    }
+    el.classList.add('active');
+    window.scrollTo({top:0, behavior:'smooth'});
+  }
+
+  function nowStringIT(){
+    return new Date().toLocaleString("it-IT");
+  }
+
+  function addTimestamp(cb){
+    const timeEl = document.getElementById("time_"+cb.id);
+    if(!timeEl) return;
+    if(cb.checked){
+      timeEl.textContent="Controllo effettuato il: "+nowStringIT();
+    } else {
+      timeEl.textContent="";
+    }
+  }
+
+  function pad2(n){ return String(n).padStart(2,"0"); }
+
+  function formatFileStamp(d){
+    return d.getFullYear()+"-"+pad2(d.getMonth()+1)+"-"+pad2(d.getDate())+"_"+pad2(d.getHours())+"-"+pad2(d.getMinutes());
+  }
+
+  function getGiroDate(){
+    // Se l'utente non compila, uso ora corrente
+    const v = document.getElementById("data_ora").value;
+    if(!v) return new Date();
+    const d = new Date(v);
+    return isNaN(d.getTime()) ? new Date() : d;
+  }
+
+  function getHeaderData(){
+    const giroDate = getGiroDate();
+    const giroStampIT = giroDate.toLocaleString("it-IT");
+    const giroFileStamp = formatFileStamp(giroDate);
+    const nome = (document.getElementById("nome").value || "").trim();
+    const safeNome = (nome || "SenzaNome").replace(/[^\w\-]+/g, "_");
+    const giroId = giroDate.getTime().toString(); // ms, unico
+    return { giroDate, giroStampIT, giroFileStamp, nome, safeNome, giroId };
+  }
+
+  function escapeCSV(value){
+    const s = (value ?? "").toString().replace(/\r?\n/g, " ").trim();
+    if (/[;"\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+    return s;
+  }
+
+  function collectRows(onlyAnomalies){
+    // Raccoglie tutte le righe (o solo NON FATTO) da tutte le sezioni
+    const { giroId, giroStampIT, nome } = getHeaderData();
+
+    const rows = [];
+    document.querySelectorAll(".section").forEach(section=>{
+      const titleEl = section.querySelector("h2");
+      if(!titleEl) return;
+      const sezione = titleEl.textContent.trim();
+
+      const checkboxes = section.querySelectorAll("input[type=checkbox]");
+      if(checkboxes.length===0) return;
+
+      checkboxes.forEach(cb=>{
+        const voce = cb.parentElement.textContent.replace(/\s+/g, " ").trim();
+        const stato = cb.checked ? "FATTO" : "NON FATTO";
+        const voceTimestamp = (document.getElementById("time_"+cb.id)?.textContent || "").trim();
+        const note = (document.getElementById("note_"+cb.id)?.value || "").trim();
+
+        if(onlyAnomalies && cb.checked) return; // solo NON FATTO
+
+        rows.push({
+          GiroID: giroId,
+          GiroDataOra: giroStampIT,
+          Nome: nome,
+          Sezione: sezione,
+          Voce: voce,
+          Stato: stato,
+          VoceTimestamp: voceTimestamp,
+          Note: note
+        });
+      });
+    });
+
+    return rows;
+  }
+
+  function generaReportTXT(onlyAnomalies){
+    const { giroStampIT, nome, giroFileStamp, safeNome } = getHeaderData();
+    const rows = collectRows(onlyAnomalies);
+
+    let report = "GIRO DI CONTROLLO MATTUTINO\n\n";
+    report += "Data/Ora: " + giroStampIT + "\n";
+    report += "Nome: " + (nome || "") + "\n";
+    report += onlyAnomalies ? "Modalità: SOLO ANOMALIE (NON FATTO)\n\n" : "Modalità: COMPLETO\n\n";
+
+    if(rows.length === 0){
+      report += onlyAnomalies
+        ? "Nessuna anomalia: tutte le voci risultano FATTE.\n"
+        : "Nessuna voce trovata.\n";
+    } else {
+      // Raggruppo per sezione
+      const bySection = new Map();
+      rows.forEach(r=>{
+        if(!bySection.has(r.Sezione)) bySection.set(r.Sezione, []);
+        bySection.get(r.Sezione).push(r);
+      });
+
+      for(const [sez, list] of bySection.entries()){
+        report += sez + "\n";
+        list.forEach(r=>{
+          report += "- " + r.Voce + ": " + r.Stato;
+          if(r.VoceTimestamp) report += " | " + r.VoceTimestamp;
+          if(r.Note) report += " | Note: " + r.Note;
+          report += "\n";
+        });
+        report += "\n";
+      }
+    }
+
+    const filename = onlyAnomalies
+      ? `Giro_${giroFileStamp}_${safeNome}_ANOMALIE.txt`
+      : `Giro_${giroFileStamp}_${safeNome}_COMPLETO.txt`;
+
+    const blob = new Blob([report], {type:"text/plain;charset=utf-8"});
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(link.href);
+  }
+
+  function generaCSV(onlyAnomalies){
+    const { giroFileStamp, safeNome } = getHeaderData();
+    const rows = collectRows(onlyAnomalies);
+
+    // Header CSV
+    let csv = "GiroID;GiroDataOra;Nome;Sezione;Voce;Stato;VoceTimestamp;Note\n";
+
+    if(rows.length === 0){
+      // file comunque valido, con solo intestazione
+      // (utile per tracciare che "non ci sono anomalie" in quella data)
+    } else {
+      rows.forEach(r=>{
+        csv += [
+          escapeCSV(r.GiroID),
+          escapeCSV(r.GiroDataOra),
+          escapeCSV(r.Nome),
+          escapeCSV(r.Sezione),
+          escapeCSV(r.Voce),
+          escapeCSV(r.Stato),
+          escapeCSV(r.VoceTimestamp),
+          escapeCSV(r.Note)
+        ].join(";") + "\n";
+      });
+    }
+
+    const filename = onlyAnomalies
+      ? `Giro_${giroFileStamp}_${safeNome}_ANOMALIE.csv`
+      : `Giro_${giroFileStamp}_${safeNome}_COMPLETO.csv`;
+
+    const blob = new Blob([csv], {type:"text/csv;charset=utf-8"});
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(link.href);
+  }
+</script>
+
+<script>
+  function creaSezione(id, titolo, items){
+    const div = document.createElement("div");
+    div.className = "section";
+    div.id = id;
+    div.innerHTML = "<h2>"+titolo+"</h2>";
+
+    items.forEach((item, i)=>{
+      const cbId = id + "_" + i;
+      div.innerHTML += `
+        <label>
+          <input type="checkbox" id="${cbId}" onchange="addTimestamp(this)">
+          ${item}
+        </label>
+        <textarea id="note_${cbId}" placeholder="Note..."></textarea>
+        <p id="time_${cbId}" class="timestamp"></p>
+      `;
+    });
+
+    document.querySelector(".content").appendChild(div);
+  }
+
+  // --- SEZIONI (allineate al tuo elenco originale) ---
+
+  creaSezione("piano_m1","PIANO -1",[
+    "CANCELLO GARAGE CHIUSO E FUNZIONANTE",
+    "USCITA EMERGENZA GARAGE SGOMBRA E SICURA",
+    "TELECAMERA CANCELLO ATTIVA",
+    "ACCESSI MAGAZZINI CHIUSI E SICURI",
+    "ACCESSO MAGAZZINO LAVANDERIA CHIUSO E SICURO",
+    "DISPOSITIVI ANTINCENDIO PRESENTI E ACCESSIBILI"
+  ]);
+
+  creaSezione("piano_terra","PIANO TERRA",[
+    "USCITE EMERGENZA SGOMBRE E SICURE",
+    "CORRIDOI SGOMBRI E LIBERI DA OSTACOLI",
+    "USCITE EMERGENZA SALA MEETING SGOMBRE E SICURE",
+    "BUSSOLA DI INGRESSO LIBERA E SICURA",
+    "USCITA POSTERIORE CUCINA CHIUSA",
+    "TELECAMERE PIANO TERRA ATTIVE (BUSSOLA E CUCINA)",
+    "DISPOSITIVI ANTINCENDIO PRESENTI E ACCESSIBILI",
+    "SEGNALETICA VIE DI FUGA PRESENTE ED IN BUONO STATO",
+    "CAVEDIO: LUCE SPENTA E DISPOSITIVI FUNZIONANTI"
+  ]);
+
+  const pianiStandard = [
+    "SCALE INTERNE SGOMBRE E PRIVE DI OSTACOLI",
+    "CORRIDOI SGOMBRI E LIBERI DA OSTACOLI",
+    "USCITE EMERGENZA SGOMBRE E SICURE",
+    "PORTE CAMERE CHIUSE E SICURE",
+    "DISPOSITIVI ANTINCENDIO PRESENTI E ACCESSIBILI",
+    "SEGNALETICA VIE DI FUGA PRESENTE ED IN BUONO STATO",
+    "TELECAMERA USCITA EMERGENZA ATTIVA",
+    "CAVEDIO: LUCE SPENTA E DISPOSITIVI FUNZIONANTI",
+    "OFFICE CAMERIERE: LUCE SPENTA E PORTA CHIUSA A FINE SERVIZIO"
+  ];
+
+  creaSezione("piano1","PIANO 1",pianiStandard);
+  creaSezione("piano2","PIANO 2",pianiStandard);
+  creaSezione("piano3","PIANO 3",pianiStandard);
+  creaSezione("piano4","PIANO 4",pianiStandard);
+  creaSezione("piano5","PIANO 5",pianiStandard);
+
+  creaSezione("tetto","PIANO 6 TETTO",[
+    "PORTA ACCESSO 6° PIANO CHIUSA E SGOMBRA",
+    "CENTRALE TERMICA OPERATIVA CON LUCE SPENTA",
+    "CALDAIE OPERATIVE (INVERNALE)",
+    "CHILLER OPERATIVO (ESTIVO)",
+    "PORTA OFFICE MANUTENTORE CHIUSA",
+    "QUADRO ANTENNA OPERATIVO",
+    "EVENTUALI ANOMALIE AREA PANNELLI SOLARI",
+    "DISPOSITIVI ANTINCENDIO PRESENTI E ACCESSIBILI",
+    "SEGNALETICA VIE DI FUGA PRESENTE ED IN BUONO STATO"
+  ]);
+
+  creaSezione("scale","SCALE EMERGENZA ESTERNE",[
+    "SCALE LIBERE E SGOMBRE DA OSTACOLI",
+    "LUCI EMERGENZA LUNGO LE SCALE ATTIVE",
+    "PORTE EMERGENZA SGOMBRE E SICURE (CHIUSE DA ESTERNO)",
+    "SEGNALETICA VIE DI FUGA PRESENTE ED IN BUONO STATO"
+  ]);
+
+  creaSezione("area","AREA ESTERNA",[
+    "TELECAMERE ATTIVE"
+  ]);
+
+  creaSezione("hotel","HOTEL",[
+    "PORTE EMERGENZA SGOMBRE E SICURE (CHIUSE DA ESTERNO)",
+    "SEGNALETICA PUNTI RACCOLTA PRESENTE ED IN BUONO STATO",
+    "ACCESSO GARAGE LIBERO ED ACCESSIBILE",
+    "LETTORE ESTERNO TESSERA GARAGE ATTIVO",
+    "FINESTRE CHIUSE",
+    "VALVOLA INTERCETTAZIONE GAS PULITA ED ACCESSIBILE E SUO CARTELLO IN BUONO STATO",
+    "NESSUN RESIDUO INGOMBRANTE (NEL CASO GETTARE RIFIUTO)",
+    "PENSILINA E SUE VIE DI SCARICO ACQUA LIBERE",
+    "ATTIVITA’ SOSPETTE NEI DINTORNI DEL HOTEL"
+  ]);
+</script>
+
+</div>
+</body>
+</html>
