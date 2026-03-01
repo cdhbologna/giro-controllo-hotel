@@ -235,7 +235,7 @@
     const { giroStampIT, nome, giroFileStamp, safeNome } = getHeaderData();
     const rows = collectRows(onlyAnomalies);
 
-    let report = "GIRO DI CONTROLLO MATTUTINO\n\n";
+    let report = "GIRO DI CONTROLLO\n\n";
     report += "Data/Ora: " + giroStampIT + "\n";
     report += "Nome: " + (nome || "") + "\n";
     report += onlyAnomalies ? "Modalità: SOLO ANOMALIE (NON FATTO)\n\n" : "Modalità: COMPLETO\n\n";
